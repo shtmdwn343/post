@@ -3,6 +3,7 @@
 #include "type.h"
 
 #define loop while (1)
+#define unless(p) if (!(p))
 #define until(p) while (!(p))
 #define skip(p) if (p) continue
 

@@ -5,13 +5,13 @@
 #include "hash.h"
 #include "macro.h"
 
-char url1[] = "service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm?sid1=1068821878456";
-char url2[] = "service.epost.go.kr/trace.RetrieveDomRigiTraceSolvList.comm?sid1=1068821878456&prm_sender_nm=%EC%84%A0%EA%B1%B0&prm_receiver_nm=%EA%B4%91%EC%A3%BC";
-char url3[] = "trace.epost.go.kr/xtts/servlet/kpl.tts.common.svl.VisSVL?target_command=kpl.tts.tt.fmt.cmd.RetrieveCmsDetailInfoCMD&JspURI=/xtts/tt/epost/trace/sttfmt03p09.jsp&RegiNo=1068821878456&DelivYmd=20250530&EventPocd=40326";
+char url1[] = "service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm?sid1=1068821878388";
+char url2[] = "service.epost.go.kr/trace.RetrieveDomRigiTraceSolvList.comm?sid1=1068821878388&prm_sender_nm=%EC%84%A0%EA%B1%B0&prm_receiver_nm=%EA%B9%80%ED%8F%AC";
+char url3[] = "trace.epost.go.kr/xtts/servlet/kpl.tts.common.svl.VisSVL?target_command=kpl.tts.tt.fmt.cmd.RetrieveCmsDetailInfoCMD&JspURI=/xtts/tt/epost/trace/sttfmt03p09.jsp&RegiNo=1068821878388&DelivYmd=20250530&EventPocd=40228";
 
 u8 data1[131072];
 u8 data2[131072];
-u8 data3[128];
+u8 data3[2048];
 
 string buffer1 = { data1, 0 };
 string buffer2 = { data2, 0 };
@@ -23,7 +23,7 @@ CURL* curl2;
 CURL* curl3;
 
 // 등기 번호, 응답 시간, 배송 진행 상황, 받는 분, 수령인, 우체국, 집배원 성명, 집배원 전화번호
-char data[1024] = "1068821878456,20250801:123456,";
+char data[1024] = "1068821878388,20250815:123456,";
 FILE* fp;
 
 u8* wp;
@@ -34,7 +34,7 @@ u8 len;
 
 bool p;
 
-static inline void update_url1(u32 n)
+static void update_url1(u32 n)
 {
     url1[73] = '0' + n % 10; n /= 10;
     url1[72] = '0' + n % 10; n /= 10;
@@ -45,28 +45,23 @@ static inline void update_url1(u32 n)
     url1[67] = '0' + n / 10;
 }
 
-static inline char ntoh(const u8 n)
+static char ntoh(const u8 n)
 {
     return (n < 10) ? n + 48 : n + 55;
 }
 
-static size_t write_callback(char* contents, size_t size, size_t nmemb, string* userp)
-{
-    size_t total_size = size * nmemb;
-    memcpy(userp->data + userp->size, contents, total_size);
-    userp->size += total_size;
-    return total_size;
-}
+static u32 rgist;
+static u32 count;
 
-static bool request(u32 rgist, u32 count)
+static void request()
 {
-    update_url1(rgist++);
+    update_url1(rgist);
     curl_easy_setopt(curl1, CURLOPT_URL, url1);
 
     buffer1.size = 0;
     guard (curl_easy_perform(curl1) == CURLE_OK);
 
-    while (count--)
+    while (count)
     {
         // 등기 번호
         cpy8(data + 5, url1 + 66);
@@ -87,7 +82,7 @@ static bool request(u32 rgist, u32 count)
             data[20] = '0' + t / 10;
         }
 
-        update_url1(rgist++);
+        update_url1(++rgist);
         curl_easy_setopt(curl1, CURLOPT_URL, url1);
 
         // Omit
@@ -99,7 +94,10 @@ static bool request(u32 rgist, u32 count)
             data[33] = ',';
             data[34] = ',';
             data[35] = '\n';
+
             fwrite(data, 1, 36, fp);
+            system("cls");
+            printf("%u", count--);
 
             buffer1.size = 0;
             guard (curl_easy_perform(curl1) == CURLE_OK);
@@ -165,20 +163,25 @@ static bool request(u32 rgist, u32 count)
         curl_multi_add_handle(curlm, curl2);
         curl_multi_add_handle(curlm, curl3);
 
+        CURLMcode mc;
         int still_running;
-        curl_multi_perform(curlm, &still_running);
-
-        while (still_running) {
-            int numfds;
-            guard (curl_multi_poll(curlm, NULL, 0, 1000, &numfds) == CURLM_OK);
-            curl_multi_perform(curlm, &still_running);
+        loop
+        {
+            mc = curl_multi_perform(curlm, &still_running);
+            check (mc == CURLM_OK && still_running);
+            mc = curl_multi_poll(curlm, NULL, 0, 1000, NULL);
+            check (mc == CURLM_OK);
         }
 
         curl_multi_remove_handle(curlm, curl3);
         curl_multi_remove_handle(curlm, curl2);
         curl_multi_remove_handle(curlm, curl1);
         
-        reject (buffer2.size <= 102570);
+        if (mc != CURLM_OK || buffer1.size < 102570 || buffer2.size <= 102570 || buffer3.size <= 1669)
+        {
+            --rgist;
+            return;
+        }
 
         // 받는 분
         rp = buffer2.data + 84939;
@@ -191,7 +194,7 @@ static bool request(u32 rgist, u32 count)
         *wp++ = ',';
 
         // 우체국
-        rp = buffer3.data;
+        rp = buffer3.data + 1481;
         cpy (wp, rp, '<');
         *wp++ = ',';
 
@@ -207,8 +210,16 @@ static bool request(u32 rgist, u32 count)
 
         fwrite(data, 1, wp - data + 1, fp);
         system("cls");
-        printf("%u", count);
+        printf("%u", --count);
     }
+}
+
+static size_t write_callback(char* contents, size_t size, size_t nmemb, string* userp)
+{
+    size_t total_size = size * nmemb;
+    memcpy(userp->data + userp->size, contents, total_size);
+    userp->size += total_size;
+    return total_size;
 }
 
 void main()
@@ -225,9 +236,16 @@ void main()
     curl_easy_setopt(curl1, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl2, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl3, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl3, CURLOPT_RANGE, "1481-1608");
 
+    rgist = 1878388 + 500000 * 0;
+    count = 500000;
+    
     fp = fopen("output0.txt", "wb");
-    request(1878388 + 262144 * 0, 262144); // 1068821878388 ~ 1068826173279
+    while (count) request(); // 1068821878388 ~ 1068826173279
     fclose(fp);
+
+    curl_easy_cleanup(curl3);
+    curl_easy_cleanup(curl2);
+    curl_easy_cleanup(curl1);
+    curl_multi_cleanup(curlm);
 }
